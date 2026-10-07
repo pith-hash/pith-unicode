@@ -3,7 +3,7 @@
 ## Quick reference
 
 - Repo: `pith-hash/pith-unicode`
-- Description: pith foundation: pith-unicode (zero-dep Rust)
+- Description: pith foundation: unicode (zero-dep Rust)
 - License: Apache-2.0
 
 ## Build & Test
