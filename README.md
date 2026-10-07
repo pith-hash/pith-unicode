@@ -50,12 +50,11 @@ follows the same rules; CI enforces them mechanically:
 ## Repository layout
 
 ```
-crates/            one published crate per suite lib (pith-<domain>)
+src/               the pith-unicode library (NFC/NFD over embedded UCD tables)
+data/ucd.bin       the embedded UCD 15.1.0 tables (include_bytes!, no build.rs)
+data/UNICODE-LICENSE.txt  Unicode License V3 for the UCD and derived tables
 tools/gen-reference  the vector generator binary (bin name: gen-reference)
-sdk/python         ctypes wheel; build backend reads PITH_CDYLIB_DIR
-sdk/node           koffi-based package; prebuilds/<os-arch>/ carry the cdylib
-sdk/go             cgo binding; go.mod carries the module's cgo flags
-fuzz/corpus        fuzz inputs, replayed by tests/fuzz_corpus.rs (parser crates)
+tests/             the UCD conformance corpus and the reference-vector tests
 reference.json     hex-exact cross-SDK test vectors
 ```
 
@@ -72,7 +71,20 @@ see the release assets or the package registries for the matching version.
 
 ## Quick start
 
-(Add example commands here.)
+```rust
+use pith_unicode::{nfc, nfd};
+
+// Decomposed and precomposed Vietnamese converge on the same NFC bytes:
+assert_eq!(nfc("Ta\u{0302}\u{0300}ng"), "T\u{1EA7}ng");
+assert_eq!(nfd("T\u{1EA7}ng"), "Ta\u{0302}\u{0300}ng");
+```
+
+Regenerate/verify the cross-SDK vectors:
+
+```bash
+cargo run --locked --bin gen-reference -- verify   # CI runs this
+cargo run --locked --bin gen-reference -- gen      # rewrite reference.json
+```
 
 ## Contributing
 

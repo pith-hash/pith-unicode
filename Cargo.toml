@@ -2,8 +2,20 @@
 name = "pith-unicode"
 version = "0.1.0"
 edition = "2024"
-description = "pith foundation: unicode (zero-dep Rust)"
+description = "Unicode NFC normalisation driven by tables generated from the UCD."
 readme = "README.md"
 license = "Apache-2.0"
+categories = ["algorithms", "cryptography"]
 
-[dependencies]
+# Only the tests exercise the suite's SHA-256 (hash equality on NFC forms);
+# the library itself builds with an empty dependency table.
+[dev-dependencies]
+pith-digest = { git = "https://github.com/pith-hash/pith-digest.git", branch = "main" }
+
+[[bin]]
+name = "gen-reference"
+path = "tools/gen-reference/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
