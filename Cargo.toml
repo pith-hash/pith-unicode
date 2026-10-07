@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Unicode NFC normalisation driven by tables generated from the UCD."
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT"
 categories = ["algorithms", "cryptography"]
 
 # Only the tests exercise the suite's SHA-256 (hash equality on NFC forms);

@@ -4,7 +4,7 @@
 
 - Repo: `pith-hash/pith-unicode`
 - Description: pith foundation: unicode (zero-dep Rust)
-- License: Apache-2.0
+- License: MIT
 
 ## Build & Test
 
