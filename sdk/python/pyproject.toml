@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pith-unicode"
+version = "0.1.0"
+description = "Unicode NFC/NFD normalisation SDK via the pith-unicode Rust cdylib (ctypes, zero-dep)"
+license = "MIT"
+requires-python = ">=3.9"
+keywords = ["unicode", "nfc", "nfd", "normalization", "hashing"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "Topic :: Software Development :: Internationalization",
+]
+
+[project.urls]
+Repository = "https://github.com/pith-hash/pith-unicode"
+Homepage = "https://github.com/pith-hash/pith-unicode"
+
+[tool.setuptools]
+packages = ["pith_unicode"]
+
+[tool.setuptools.package-data]
+pith_unicode = ["*.dll", "*.dylib", "*.so"]

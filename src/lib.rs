@@ -27,8 +27,15 @@
 //! 0=Yes, 1=No, 2=Maybe; a string whose every character is `Yes` is already
 //! NFC, which is the fast path [`nfc`] takes.
 
-#![forbid(unsafe_code)]
+// `unsafe` is denied everywhere except `ffi`, the C ABI surface the
+// language SDKs bind through: raw pointers exist only at that boundary,
+// and every exported function is a documented `unsafe extern "C"` fn.
+#![deny(unsafe_code)]
 #![deny(missing_docs)]
+
+/// The C ABI surface the Python (ctypes), Node (koffi) and Go (cgo)
+/// SDKs bind through.
+pub mod ffi;
 
 /// The embedded UCD tables (UCD 15.1.0, licensed per
 /// `data/UNICODE-LICENSE.txt`).
