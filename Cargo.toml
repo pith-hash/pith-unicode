@@ -21,6 +21,10 @@ pith-digest = { git = "https://github.com/pith-hash/pith-digest.git", branch = "
 name = "gen-reference"
 path = "tools/gen-reference/main.rs"
 
+[[bin]]
+name = "gen-ucd"
+path = "tools/gen-ucd/main.rs"
+
 # `unsafe_code` is denied at the crate root (`#![deny(unsafe_code)]` in
 # src/lib.rs), with the single `#![allow(unsafe_code)]` confined to
 # src/ffi.rs, the C ABI surface. It cannot live here: `[lints]` entries

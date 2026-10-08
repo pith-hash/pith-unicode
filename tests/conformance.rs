@@ -1,15 +1,24 @@
 //! Conformance for `pith-unicode`: the official UCD `NormalizationTest.txt`
-//! (all 19 074 data lines), the Vietnamese decomposed/precomposed pair the
-//! spec requires, idempotence, and hash equality on the NFC forms.
+//! (all 19 074 data lines) across all four forms plus case folding, the
+//! Vietnamese decomposed/precomposed pair the spec requires, idempotence,
+//! composition properties, quick-check equivalence, and hash equality on
+//! the NFC forms.
 //!
 //! The conformance corpus is `tests/NormalizationTest.txt`, embedded with
 //! `include_bytes!` so the test does not depend on the working directory and
 //! stays a fixed contract (`.gitattributes` pins it to LF). Its bytes are
 //! generated data, not hand-written code.
 
-use pith_unicode::{nfc, nfd};
+use pith_unicode::{
+    NormalizationForm, casefold, casefold_simple, is_normalized, nfc, nfd, nfkc, nfkd, normalize,
+};
+
+use NormalizationForm::{Nfc, Nfd, Nfkc, Nfkd};
 
 const CORPUS: &str = include_str!("NormalizationTest.txt");
+
+/// All four forms, in `NormalizationForm::code` order.
+const FORMS: [NormalizationForm; 4] = [Nfc, Nfd, Nfkc, Nfkd];
 
 /// Parse a semicolon column of hex code points into a `String`.
 fn cps(col: &str) -> String {
@@ -143,4 +152,193 @@ fn nfc_forms_hash_equal() {
     let h1 = pith_digest::sha256(decomposed.as_bytes()).unwrap();
     let h2 = pith_digest::sha256(precomposed.as_bytes()).unwrap();
     assert_eq!(h1, h2);
+}
+
+/// UAX #15 compatibility conformance: NFKD is the same for all five
+/// columns (canonical equivalence implies compatibility equivalence),
+/// likewise NFKC — and compatibility decomposition is idempotent.
+#[test]
+fn ucd_conformance_compat_forms() {
+    let mut lines = 0;
+    each_line(|line, s| {
+        lines += 1;
+        let expected_nfkd = nfkd(&s[0]);
+        let expected_nfkc = nfkc(&s[0]);
+        for src in &s {
+            assert_eq!(&nfkd(src), &expected_nfkd, "NFKD mismatch on {line}");
+            assert_eq!(&nfkc(src), &expected_nfkc, "NFKC mismatch on {line}");
+        }
+    });
+    assert_eq!(lines, 19_074, "every data line of the corpus must run");
+}
+
+/// Idempotence across every form: f(f(x)) == f(x) for every column of
+/// every line, f in {NFD, NFC, NFKD, NFKC, casefold, casefold_simple}.
+#[test]
+fn all_forms_idempotent() {
+    each_line(|line, s| {
+        for src in &s {
+            for form in FORMS {
+                let once = normalize(form, src);
+                assert_eq!(
+                    normalize(form, &once),
+                    once,
+                    "{form:?} not idempotent on {line}"
+                );
+            }
+            assert_eq!(
+                casefold(&casefold(src)),
+                casefold(src),
+                "fold not idempotent on {line}"
+            );
+            assert_eq!(
+                casefold_simple(&casefold_simple(src)),
+                casefold_simple(src),
+                "simple fold not idempotent on {line}"
+            );
+        }
+    });
+}
+
+/// Composition properties: NFC(NFD(x)) == NFC(x) and NFKC(NFKD(x)) ==
+/// NFKC(x) for every column of every line.
+#[test]
+fn composition_absorbs_decomposition() {
+    each_line(|line, s| {
+        for src in &s {
+            assert_eq!(nfc(&nfd(src)), nfc(src), "NFC(NFD(x)) != NFC(x) on {line}");
+            assert_eq!(
+                nfkc(&nfkd(src)),
+                nfkc(src),
+                "NFKC(NFKD(x)) != NFKC(x) on {line}"
+            );
+        }
+    });
+}
+
+/// Quick-check equivalence (UAX #15, "Detecting Normalization Forms"):
+/// `is_normalized(f, x)` is exactly `normalize(f, x) == x` for every
+/// form and every column of every line. This exercises both the
+/// allocation-free fast path and the Maybe-driven slow path.
+#[test]
+fn quick_check_matches_the_slow_path() {
+    each_line(|line, s| {
+        for src in &s {
+            for form in FORMS {
+                assert_eq!(
+                    is_normalized(form, src),
+                    normalize(form, src) == *src,
+                    "is_normalized({form:?}) disagrees on {line}"
+                );
+            }
+        }
+    });
+}
+
+/// The quick-check fast path on strings the corpus does not cover:
+/// decomposed and precomposed Hangul, composition-excluded characters,
+/// and the NFC_Maybe "no composition happens" case (`q` + combining
+/// grave) whose honest answer is `true`.
+#[test]
+fn quick_check_hangul_and_edge_cases() {
+    // Hangul: precomposed syllables are NFC/NFKC but not NFD/NFKD;
+    // full jamo sequences are the reverse; LV+T decomposes.
+    assert!(is_normalized(Nfc, "가") && is_normalized(Nfkc, "가"));
+    assert!(!is_normalized(Nfd, "가") && !is_normalized(Nfkd, "가"));
+    let jamo = "\u{1100}\u{1161}";
+    assert!(
+        !is_normalized(Nfc, jamo),
+        "L+V jamo must take the Maybe slow path"
+    );
+    let lv = "\u{AC00}";
+    assert!(is_normalized(Nfc, lv));
+    assert_eq!(nfc(jamo), lv);
+    // The same through `normalize` dispatch.
+    assert_eq!(normalize(Nfc, jamo), normalize(Nfc, lv));
+    let jamo_lvt = "\u{1100}\u{1161}\u{11A8}";
+    assert_eq!(normalize(Nfkd, "각"), normalize(Nfkd, jamo_lvt));
+    assert_eq!(nfc(jamo_lvt), "각");
+
+    // Full_Composition_Exclusion: U+0344 decomposes under NFC and never
+    // recomposes, so the string is not NFC — but its QC=No is what
+    // proves it (no slow path needed).
+    assert!(!is_normalized(Nfc, "\u{0344}"));
+    assert_eq!(nfc("\u{0344}"), "\u{0308}\u{0301}");
+
+    // NFC_Maybe without an actual composition: U+0300 after `q` cannot
+    // compose, the slow path must answer `true`.
+    assert!(is_normalized(Nfc, "q\u{0300}"));
+    assert!(is_normalized(Nfkc, "q\u{0300}"));
+    // ... and after `a` it does compose, so the answer is `false`.
+    assert!(!is_normalized(Nfc, "a\u{0300}"));
+    assert_eq!(nfc("a\u{0300}"), "\u{E0}");
+
+    // Compatibility: the ligature ﬁ is canonically stable (NFC/NFD) but
+    // changes under NFKC/NFKD into plain letters.
+    assert!(is_normalized(Nfc, "\u{FB01}") && is_normalized(Nfd, "\u{FB01}"));
+    assert!(!is_normalized(Nfkc, "\u{FB01}") && !is_normalized(Nfkd, "\u{FB01}"));
+    assert_eq!(nfkd("\u{FB01}"), "fi");
+    assert_eq!(nfkc("\u{FB01}"), "fi");
+
+    // The empty string and ASCII are every form's fixed point.
+    for form in FORMS {
+        assert!(is_normalized(form, ""));
+        assert!(is_normalized(form, "hello"));
+    }
+}
+
+/// Case folding, spot-pinned per UAX #44 / `CaseFolding.txt`: ß and ẞ
+/// fold to `ss`, ẞ folds simply to ß, İ keeps its dot, the Greek
+/// terminal sigma folds to σ, and the ligature ﬁ unfolds.
+#[test]
+fn casefolding_pinned() {
+    assert_eq!(casefold("ß"), "ss");
+    assert_eq!(casefold("\u{1E9E}"), "ss");
+    assert_eq!(casefold_simple("\u{1E9E}"), "\u{DF}");
+    assert_eq!(casefold_simple("ß"), "ß");
+    assert_eq!(casefold("\u{130}"), "i\u{307}");
+    assert_eq!(casefold_simple("\u{130}"), "\u{130}");
+    assert_eq!(casefold("ΣΊΣΥΦΟΣ"), "σίσυφοσ"); // ς folds to σ, never the reverse
+    assert_eq!(casefold("σίσυφος"), "σίσυφοσ");
+    assert_eq!(casefold("\u{FB03}"), "ffi");
+    assert_eq!(casefold_simple("\u{FB03}"), "\u{FB03}");
+    assert_eq!(casefold("ÀÉÎÕÜ"), "àéîõü");
+    assert_eq!(casefold_simple("ǅ"), "ǆ");
+    // The Turkic `T` entries are locale data: U+0131 keeps folding to
+    // itself and `I` folds to `i` regardless of Turkish context.
+    assert_eq!(casefold("I\u{131}"), "i\u{131}");
+    // Folding is a per-character mapping and never panics on any scalar.
+    for cp in (0u32..=0x10FFFE).step_by(97) {
+        let Some(ch) = char::from_u32(cp) else {
+            continue;
+        };
+        let _ = casefold_simple(&ch.to_string());
+        let _ = casefold(&ch.to_string());
+    }
+}
+
+/// The Vietnamese pair under every form, the way the tier-1 contract
+/// reads: both spellings agree under NFC *and* NFKC, and the FFI form
+/// codes dispatch to the same results.
+#[test]
+fn vietnamese_pair_across_all_forms() {
+    let decomposed = "Ta\u{0302}\u{0300}ng";
+    let precomposed = "T\u{1EA7}ng";
+    for form in [Nfc, Nfkc] {
+        assert_eq!(normalize(form, decomposed), normalize(form, precomposed));
+    }
+    for form in [Nfd, Nfkd] {
+        assert_eq!(normalize(form, decomposed), normalize(form, precomposed));
+    }
+}
+
+/// `NormalizationForm::code`/`from_code` round-trip, and out-of-range
+/// codes are refused.
+#[test]
+fn form_codes_round_trip() {
+    for form in FORMS {
+        assert_eq!(NormalizationForm::from_code(form.code()), Some(form));
+    }
+    assert_eq!(NormalizationForm::from_code(0), None);
+    assert_eq!(NormalizationForm::from_code(5), None);
 }

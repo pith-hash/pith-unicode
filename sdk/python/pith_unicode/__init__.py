@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 pith-hash
-"""pith-unicode SDK: Unicode NFC/NFD normalisation through ctypes.
+"""pith-unicode SDK: Unicode normalisation and case folding through ctypes.
 
 Every function validates its input as UTF-8 inside the Rust core and
 returns fresh ``bytes`` — the handed-out cdylib buffer is copied into
@@ -8,10 +8,17 @@ the result and released before returning. Invalid UTF-8 raises
 :class:`FfiError` with ``status == STATUS_REJECTED``; it is never a
 crash.
 
+Operations: the four UAX #15 normalization forms (NFC, NFD, NFKC, NFKD
+— directly or through :func:`normalize`) plus quick-check detection
+(:func:`is_normalized`) and case folding (:func:`casefold`,
+:func:`casefold_simple`).
+
 Example:
     >>> import pith_unicode
     >>> pith_unicode.nfc("Tasosteel".encode("utf-8"))
     b'Tasosteel'
+    >>> pith_unicode.casefold("\u1e9e".encode("utf-8"))
+    b'ss'
 """
 
 from __future__ import annotations
@@ -27,9 +34,20 @@ __all__ = [
     "STATUS_INVALID",
     "STATUS_REJECTED",
     "CDYLIB_NAMES",
+    "FORM_NFC",
+    "FORM_NFD",
+    "FORM_NFKC",
+    "FORM_NFKD",
+    "NORMALIZATION_FORMS",
     "find_cdylib",
     "nfc",
     "nfd",
+    "nfkc",
+    "nfkd",
+    "normalize",
+    "is_normalized",
+    "casefold",
+    "casefold_simple",
 ]
 
 #: Status: success.
@@ -42,6 +60,21 @@ STATUS_REJECTED = -2
 #: Every cdylib file name cargo may drop into the build directory, per
 #: platform (windows / linux / macOS).
 CDYLIB_NAMES = ("pith_unicode.dll", "libpith_unicode.so", "libpith_unicode.dylib")
+
+#: Normalization form codes (UAX #15), the FFI `form` argument encoding.
+FORM_NFC = 1
+FORM_NFD = 2
+FORM_NFKC = 3
+FORM_NFKD = 4
+
+#: Accepted spellings of a normalization form: the codes above or their
+#: names, case-insensitive ("nfc", "NFKD", ...).
+NORMALIZATION_FORMS = {
+    "NFC": FORM_NFC,
+    "NFD": FORM_NFD,
+    "NFKC": FORM_NFKC,
+    "NFKD": FORM_NFKD,
+}
 
 
 class LibraryNotFoundError(OSError):
@@ -99,7 +132,14 @@ def _load() -> ctypes.CDLL:
     global _lib
     if _lib is None:
         lib = ctypes.CDLL(str(find_cdylib()))
-        for op in ("pith_unicode_nfc", "pith_unicode_nfd"):
+        for op in (
+            "pith_unicode_nfc",
+            "pith_unicode_nfd",
+            "pith_unicode_nfkc",
+            "pith_unicode_nfkd",
+            "pith_unicode_casefold",
+            "pith_unicode_casefold_simple",
+        ):
             fn = getattr(lib, op)
             fn.argtypes = [
                 ctypes.c_void_p,  # data
@@ -108,6 +148,14 @@ def _load() -> ctypes.CDLL:
                 ctypes.POINTER(ctypes.c_size_t),  # out length
             ]
             fn.restype = ctypes.c_int32
+        normalize_fn = lib.pith_unicode_is_normalized
+        normalize_fn.argtypes = [
+            ctypes.c_uint32,  # normalization form code
+            ctypes.c_void_p,  # data
+            ctypes.c_size_t,  # len
+            ctypes.POINTER(ctypes.c_uint8),  # out answer
+        ]
+        normalize_fn.restype = ctypes.c_int32
         lib.pith_unicode_free.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
         lib.pith_unicode_free.restype = None
         _lib = lib
@@ -144,3 +192,71 @@ def nfd(data: bytes) -> bytes:
     """Normalizes ``data`` to Unicode Normalization Form D (canonical
     decomposition), with the same contract as :func:`nfc`."""
     return _normalize("pith_unicode_nfd", data)
+
+
+def nfkc(data: bytes) -> bytes:
+    """Normalizes ``data`` to Unicode Normalization Form KC (compatibility
+    composition), with the same contract as :func:`nfc`."""
+    return _normalize("pith_unicode_nfkc", data)
+
+
+def nfkd(data: bytes) -> bytes:
+    """Normalizes ``data`` to Unicode Normalization Form KD (compatibility
+    decomposition), with the same contract as :func:`nfc`."""
+    return _normalize("pith_unicode_nfkd", data)
+
+
+def _form_code(form: int | str) -> int:
+    """Resolves a normalization form given as a code or name."""
+    if isinstance(form, str):
+        try:
+            return NORMALIZATION_FORMS[form.upper()]
+        except KeyError:
+            raise ValueError(f"unknown normalization form {form!r}") from None
+    if form in NORMALIZATION_FORMS.values():
+        return form
+    raise ValueError(f"unknown normalization form code {form!r}")
+
+
+def normalize(form: int | str, data: bytes) -> bytes:
+    """Normalizes ``data`` to ``form`` — a :data:`NORMALIZATION_FORMS` name
+    (``"NFC"``, ``"NFD"``, ``"NFKC"``, ``"NFKD"``, any case) or one of the
+    :data:`FORM_NFC` … :data:`FORM_NFKD` codes — with the same buffer
+    contract as :func:`nfc`."""
+    op = {
+        FORM_NFC: "pith_unicode_nfc",
+        FORM_NFD: "pith_unicode_nfd",
+        FORM_NFKC: "pith_unicode_nfkc",
+        FORM_NFKD: "pith_unicode_nfkd",
+    }[_form_code(form)]
+    return _normalize(op, data)
+
+
+def is_normalized(form: int | str, data: bytes) -> bool:
+    """Answers whether ``data`` is already in normalization ``form`` — the
+    exact UAX #15 quick-check answer, never a pessimistic approximation.
+
+    Raises :class:`ValueError` for an unknown form, :class:`FfiError` with
+    ``status == STATUS_REJECTED`` for bytes that are not valid UTF-8.
+    """
+    out = ctypes.c_uint8()
+    status = _load().pith_unicode_is_normalized(
+        _form_code(form), data, len(data), ctypes.byref(out)
+    )
+    if status != STATUS_OK:
+        raise FfiError("pith_unicode_is_normalized", status)
+    return bool(out.value)
+
+
+def casefold(data: bytes) -> bytes:
+    """Folds ``data`` to its full case folding (UAX #44 statuses ``C`` and
+    ``F``; mappings may expand, e.g. ``ß`` → ``ss``). The Turkic ``T``
+    entries are locale data and are not applied. Same buffer contract as
+    :func:`nfc`."""
+    return _normalize("pith_unicode_casefold", data)
+
+
+def casefold_simple(data: bytes) -> bytes:
+    """Folds ``data`` to its simple case folding (statuses ``C`` and ``S``):
+    a strict one-to-one mapping (``ẞ`` → ``ß``, ``ß`` → itself)."""
+    return _normalize("pith_unicode_casefold_simple", data)

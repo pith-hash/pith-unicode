@@ -13,6 +13,7 @@ package pithunicode
 
 typedef int32_t (*pith_norm_fn)(const uint8_t *, size_t, uint8_t **, size_t *);
 typedef void (*pith_free_fn)(uint8_t *, size_t);
+typedef int32_t (*pith_isnorm_fn)(uint32_t, const uint8_t *, size_t, uint8_t *);
 
 static int32_t pith_call_norm(void *fn, const uint8_t *data, size_t len,
                               uint8_t **out, size_t *out_len) {
@@ -21,6 +22,11 @@ static int32_t pith_call_norm(void *fn, const uint8_t *data, size_t len,
 
 static void pith_call_free(void *fn, uint8_t *ptr, size_t len) {
     ((pith_free_fn)fn)(ptr, len);
+}
+
+static int32_t pith_call_isnorm(void *fn, uint32_t form, const uint8_t *data,
+                                size_t len, uint8_t *out) {
+    return ((pith_isnorm_fn)fn)(form, data, len, out);
 }
 */
 import "C"
@@ -92,4 +98,19 @@ func ffiFree(libPath string, ptr *byte, n uintptr) {
 		return
 	}
 	C.pith_call_free(sym, (*C.uint8_t)(unsafe.Pointer(ptr)), C.size_t(n))
+}
+
+// ffiIsNormalized resolves pith_unicode_is_normalized and calls it;
+// out receives the 0/1 answer.
+func ffiIsNormalized(libPath string, form int32, data *byte, n int, out *byte) (int32, error) {
+	handle, err := openCdylib(libPath)
+	if err != nil {
+		return 0, err
+	}
+	defer C.dlclose(handle)
+	sym, err := resolveSymbol(handle, libPath, "pith_unicode_is_normalized")
+	if err != nil {
+		return 0, err
+	}
+	return int32(C.pith_call_isnorm(sym, C.uint32_t(form), (*C.uint8_t)(unsafe.Pointer(data)), C.size_t(n), (*C.uint8_t)(unsafe.Pointer(out)))), nil
 }

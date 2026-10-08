@@ -2,7 +2,8 @@
 // Copyright (c) 2026 pith-hash
 
 // Package pithunicode provides Go bindings for the pith-unicode Rust
-// cdylib: Unicode NFC/NFD normalisation.
+// cdylib: Unicode normalisation (NFC, NFD, NFKC, NFKD), quick-check
+// detection and case folding.
 //
 // The single Rust core (built by `cargo build --release`) is loaded at
 // runtime; the package carries zero module dependencies. On unix the
@@ -20,11 +21,12 @@
 //     anchored at this package's source directory, so a source
 //     checkout runs against a local cargo build unconfigured.
 //
-// The FFI surface is two normalisation operations plus one free:
-// pith_unicode_nfc / pith_unicode_nfd validate the input as UTF-8 and
-// hand the caller an owned buffer, and pith_unicode_free releases it.
-// Invalid UTF-8 is a *FfiError with Status == StatusRejected — never a
-// crash.
+// The FFI surface is six buffer-handed-out operations plus two query
+// operations: pith_unicode_{nfc,nfd,nfkc,nfkd,casefold,casefold_simple}
+// validate the input as UTF-8 and hand the caller an owned buffer,
+// pith_unicode_is_normalized answers the exact quick-check question,
+// and pith_unicode_free releases a handed-out buffer. Invalid UTF-8 is
+// a *FfiError with Status == StatusRejected — never a crash.
 package pithunicode
 
 import (
@@ -46,6 +48,47 @@ const (
 	// valid UTF-8).
 	StatusRejected int32 = -2
 )
+
+// NormalizationForm addresses a UAX #15 normalization form, the FFI
+// `form` argument encoding.
+type NormalizationForm int32
+
+// The four forms.
+const (
+	FormNFC  NormalizationForm = 1 // canonical composition
+	FormNFD  NormalizationForm = 2 // canonical decomposition
+	FormNFKC NormalizationForm = 3 // compatibility composition
+	FormNFKD NormalizationForm = 4 // compatibility decomposition
+)
+
+// Valid reports whether f is one of the four defined forms.
+func (f NormalizationForm) Valid() bool {
+	return f >= FormNFC && f <= FormNFKD
+}
+
+// String returns the form's conventional name.
+func (f NormalizationForm) String() string {
+	switch f {
+	case FormNFC:
+		return "NFC"
+	case FormNFD:
+		return "NFD"
+	case FormNFKC:
+		return "NFKC"
+	case FormNFKD:
+		return "NFKD"
+	default:
+		return fmt.Sprintf("NormalizationForm(%d)", int32(f))
+	}
+}
+
+// ffiOpName is the cdylib symbol of each form's buffer operation.
+var ffiOpName = map[NormalizationForm]string{
+	FormNFC:  "pith_unicode_nfc",
+	FormNFD:  "pith_unicode_nfd",
+	FormNFKC: "pith_unicode_nfkc",
+	FormNFKD: "pith_unicode_nfkd",
+}
 
 // cdylibNames are the file names cargo may drop into the build
 // directory, per platform (windows / linux / macOS).
@@ -120,6 +163,71 @@ func Nfc(data []byte) ([]byte, error) {
 // decomposition), with the same contract as Nfc.
 func Nfd(data []byte) ([]byte, error) {
 	return normalize("pith_unicode_nfd", data)
+}
+
+// Nfkc normalizes data to Unicode Normalization Form KC (compatibility
+// composition), with the same contract as Nfc.
+func Nfkc(data []byte) ([]byte, error) {
+	return normalize("pith_unicode_nfkc", data)
+}
+
+// Nfkd normalizes data to Unicode Normalization Form KD (compatibility
+// decomposition), with the same contract as Nfc.
+func Nfkd(data []byte) ([]byte, error) {
+	return normalize("pith_unicode_nfkd", data)
+}
+
+// Normalize normalizes data to form (FormNFC, FormNFD, FormNFKC or
+// FormNFKD), with the same contract as Nfc. An invalid form is an
+// *FfiError with Status == StatusInvalid.
+func Normalize(form NormalizationForm, data []byte) ([]byte, error) {
+	op, ok := ffiOpName[form]
+	if !ok {
+		return nil, &FfiError{Op: "pith_unicode_normalize", Status: StatusInvalid}
+	}
+	return normalize(op, data)
+}
+
+// IsNormalized answers whether data is already in form — the exact
+// UAX #15 quick-check answer, never a pessimistic approximation. An
+// invalid form is an *FfiError with Status == StatusInvalid; invalid
+// UTF-8 is StatusRejected.
+func IsNormalized(form NormalizationForm, data []byte) (bool, error) {
+	if !form.Valid() {
+		return false, &FfiError{Op: "pith_unicode_is_normalized", Status: StatusInvalid}
+	}
+	libPath, err := locate()
+	if err != nil {
+		return false, err
+	}
+	var answer byte
+	var dataPtr *byte
+	if len(data) > 0 {
+		dataPtr = &data[0]
+	} else {
+		dataPtr = &emptyByte
+	}
+	status, err := ffiIsNormalized(libPath, int32(form), dataPtr, len(data), &answer)
+	if err != nil {
+		return false, err
+	}
+	if status != StatusOK {
+		return false, &FfiError{Op: "pith_unicode_is_normalized", Status: status}
+	}
+	return answer == 1, nil
+}
+
+// Casefold folds data to its full case folding (UAX #44 statuses C and
+// F; mappings may expand, e.g. ß → ss). The Turkic T entries are locale
+// data and are not applied. Same contract as Nfc.
+func Casefold(data []byte) ([]byte, error) {
+	return normalize("pith_unicode_casefold", data)
+}
+
+// CasefoldSimple folds data to its simple case folding (statuses C and
+// S): a strict one-to-one mapping (ẞ → ß, ß → itself).
+func CasefoldSimple(data []byte) ([]byte, error) {
+	return normalize("pith_unicode_casefold_simple", data)
 }
 
 // emptyByte backs the data pointer for empty inputs: the FFI contract

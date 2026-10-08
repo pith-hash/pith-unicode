@@ -62,3 +62,20 @@ func ffiFree(libPath string, ptr *byte, n uintptr) {
 	defer release()
 	syscall.SyscallN(proc, uintptr(unsafe.Pointer(ptr)), n)
 }
+
+// ffiIsNormalized resolves pith_unicode_is_normalized and calls it;
+// out receives the 0/1 answer.
+func ffiIsNormalized(libPath string, form int32, data *byte, n int, out *byte) (int32, error) {
+	proc, release, err := openProc(libPath, "pith_unicode_is_normalized")
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	rc, _, _ := syscall.SyscallN(proc,
+		uintptr(uint32(form)),
+		uintptr(unsafe.Pointer(data)),
+		uintptr(n),
+		uintptr(unsafe.Pointer(out)),
+	)
+	return int32(rc), nil
+}

@@ -19,6 +19,15 @@ const STATUS_OK = 0;
 const STATUS_INVALID = -1;
 const STATUS_REJECTED = -2;
 
+/** Normalization form codes (UAX #15), the FFI `form` argument encoding. */
+const FORM_NFC = 1;
+const FORM_NFD = 2;
+const FORM_NFKC = 3;
+const FORM_NFKD = 4;
+
+/** Accepted spellings of a normalization form: the codes above or their names. */
+const NORMALIZATION_FORMS = { NFC: FORM_NFC, NFD: FORM_NFD, NFKC: FORM_NFKC, NFKD: FORM_NFKD };
+
 /** Every cdylib file name cargo may drop into the build directory, per platform. */
 const CDYLIB_NAMES = ["pith_unicode.dll", "libpith_unicode.so", "libpith_unicode.dylib"];
 
@@ -92,7 +101,8 @@ let cached = undefined;
 function loadLibrary() {
   if (cached) return cached;
   const lib = koffi.load(findCdylib());
-  // One shared prototype shape: nfc and nfd have identical C signatures.
+  // One shared prototype shape: nfc, nfd, nfkc, nfkd and both folds have
+  // identical C signatures.
   const bind = (name) =>
     lib.func(name, "int32_t", [
       "const uint8_t *",
@@ -102,26 +112,57 @@ function loadLibrary() {
     ]);
   const nfc = bind("pith_unicode_nfc");
   const nfd = bind("pith_unicode_nfd");
+  const nfkc = bind("pith_unicode_nfkc");
+  const nfkd = bind("pith_unicode_nfkd");
+  const casefold = bind("pith_unicode_casefold");
+  const casefoldSimple = bind("pith_unicode_casefold_simple");
   const free = lib.func("void pith_unicode_free(void *ptr, size_t len)");
-  cached = { nfc, nfd, free };
+  const isNormalized = lib.func("pith_unicode_is_normalized", "int32_t", [
+    "uint32_t", // normalization form code
+    "const uint8_t *", // data
+    "size_t", // len
+    koffi.out(koffi.pointer("uint8_t")), // the 0/1 answer
+  ]);
+  cached = { nfc, nfd, nfkc, nfkd, casefold, casefoldSimple, free, isNormalized };
   return cached;
 }
 
-/**
- * Runs one normalisation op and copies the handed-out cdylib buffer
+/** Resolves a normalization form given as a code or name.
+ *
+ * @param {number|string} form the form code (FORM_NFC…) or name ("NFC"…)
+ * @returns {number} the FFI form code
+ */
+function formCode(form) {
+  if (typeof form === "string") {
+    const code = NORMALIZATION_FORMS[form.toUpperCase()];
+    if (code === undefined) {
+      throw new TypeError(`unknown normalization form ${form}`);
+    }
+    return code;
+  }
+  if (Object.values(NORMALIZATION_FORMS).includes(form)) {
+    return form;
+  }
+  throw new TypeError(`unknown normalization form code ${form}`);
+}
+
+/** The loadLibrary() key of each form's buffer op. */
+const FORM_KEYS = { [FORM_NFC]: "nfc", [FORM_NFD]: "nfd", [FORM_NFKC]: "nfkc", [FORM_NFKD]: "nfkd" };
+
+/** Runs one buffer-handed-out op and copies the handed-out cdylib buffer
  * into a fresh Buffer before releasing it.
  *
- * @param {string} opName the FFI operation name (for errors)
- * @param {Buffer} data the UTF-8 bytes to normalize
- * @returns {Buffer} the normalized UTF-8 bytes
+ * @param {string} key the loadLibrary() binding key (for errors)
+ * @param {Buffer} data the UTF-8 bytes to transform
+ * @returns {Buffer} the transformed UTF-8 bytes
  * @throws {FfiError} with `status === -2` for bytes that are not valid UTF-8
  */
-function normalize(opName, data) {
+function bufferOp(key, data) {
   if (!Buffer.isBuffer(data)) {
     throw new TypeError("data must be a Buffer");
   }
   const lib = loadLibrary();
-  const op = opName === "pith_unicode_nfc" ? lib.nfc : lib.nfd;
+  const op = lib[key];
   const out = [null];
   const outLen = [0];
   // koffi hands a NULL pointer for a zero-length Buffer, but the FFI
@@ -130,7 +171,7 @@ function normalize(opName, data) {
   const ptr = data.length > 0 ? data : EMPTY_SCRATCH;
   const status = op(ptr, data.length, out, outLen);
   if (status !== STATUS_OK) {
-    throw new FfiError(opName, status);
+    throw new FfiError(key, status);
   }
   try {
     // koffi.decode hands back a Uint8Array view over the external
@@ -150,19 +191,77 @@ function normalize(opName, data) {
  * @throws {FfiError} with `status === -2` for invalid UTF-8
  */
 function nfc(data) {
-  return normalize("pith_unicode_nfc", data);
+  return bufferOp("nfc", data);
 }
 
 /**
  * Normalizes `data` to Unicode Normalization Form D (canonical
  * decomposition), with the same contract as `nfc`.
- *
- * @param {Buffer} data the UTF-8 bytes to normalize
- * @returns {Buffer} the NFD-normalized bytes
- * @throws {FfiError} with `status === -2` for invalid UTF-8
  */
 function nfd(data) {
-  return normalize("pith_unicode_nfd", data);
+  return bufferOp("nfd", data);
+}
+
+/**
+ * Normalizes `data` to Unicode Normalization Form KC (compatibility
+ * composition), with the same contract as `nfc`.
+ */
+function nfkc(data) {
+  return bufferOp("nfkc", data);
+}
+
+/**
+ * Normalizes `data` to Unicode Normalization Form KD (compatibility
+ * decomposition), with the same contract as `nfc`.
+ */
+function nfkd(data) {
+  return bufferOp("nfkd", data);
+}
+
+/**
+ * Normalizes `data` to `form` — a NORMALIZATION_FORMS name ("NFC", "NFD",
+ * "NFKC", "NFKD", any case) or one of the FORM_NFC…FORM_NFKD codes — with
+ * the same contract as `nfc`.
+ */
+function normalize(form, data) {
+  return bufferOp(FORM_KEYS[formCode(form)], data);
+}
+
+/**
+ * Answers whether `data` is already in normalization `form` — the exact
+ * UAX #15 quick-check answer, never a pessimistic approximation.
+ *
+ * @throws {TypeError} for an unknown form
+ * @throws {FfiError} with `status === -2` for invalid UTF-8
+ */
+function isNormalized(form, data) {
+  if (!Buffer.isBuffer(data)) {
+    throw new TypeError("data must be a Buffer");
+  }
+  const lib = loadLibrary();
+  const out = [0xff];
+  const status = lib.isNormalized(formCode(form), data.length > 0 ? data : EMPTY_SCRATCH, data.length, out);
+  if (status !== STATUS_OK) {
+    throw new FfiError("pith_unicode_is_normalized", status);
+  }
+  return out[0] === 1;
+}
+
+/**
+ * Folds `data` to its full case folding (UAX #44 statuses `C` and `F`;
+ * mappings may expand, e.g. ß → ss). The Turkic `T` entries are locale
+ * data and are not applied. Same contract as `nfc`.
+ */
+function casefold(data) {
+  return bufferOp("casefold", data);
+}
+
+/**
+ * Folds `data` to its simple case folding (statuses `C` and `S`): a
+ * strict one-to-one mapping (ẞ → ß, ß → itself).
+ */
+function casefoldSimple(data) {
+  return bufferOp("casefoldSimple", data);
 }
 
 module.exports = {
@@ -170,9 +269,20 @@ module.exports = {
   STATUS_INVALID,
   STATUS_REJECTED,
   CDYLIB_NAMES,
+  FORM_NFC,
+  FORM_NFD,
+  FORM_NFKC,
+  FORM_NFKD,
+  NORMALIZATION_FORMS,
   FfiError,
   findCdylib,
   loadLibrary,
   nfc,
   nfd,
+  nfkc,
+  nfkd,
+  normalize,
+  isNormalized,
+  casefold,
+  casefoldSimple,
 };
