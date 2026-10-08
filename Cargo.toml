@@ -15,7 +15,7 @@ crate-type = ["cdylib", "rlib"]
 # Only the tests exercise the suite's SHA-256 (hash equality on NFC forms);
 # the library itself builds with an empty dependency table.
 [dev-dependencies]
-pith-digest = { git = "https://github.com/pith-hash/pith-digest.git", branch = "main" }
+pith-digest = { version = "0.1", git = "https://github.com/pith-hash/pith-digest.git", branch = "main" }
 
 [[bin]]
 name = "gen-reference"
