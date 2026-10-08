@@ -61,3 +61,6 @@ superpower/
 superpowers/
 docs/superpowers/
 
+
+# Maven build outputs (the suite-wide /target/ rule only matches the root)
+sdk/java/target/
