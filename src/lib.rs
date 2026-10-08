@@ -245,9 +245,12 @@ fn decompose_with(cp: u32, mode: Mode, out: &mut Vec<u32>) {
         }
         return;
     }
-    if mode == Mode::Full
-        && let Some((base, len)) = compat_lookup(cp)
-    {
+    let compat = if mode == Mode::Full {
+        compat_lookup(cp)
+    } else {
+        None
+    };
+    if let Some((base, len)) = compat {
         for k in 0..len {
             decompose_with(u32_at(UCD, COMPAT_ELEM_OFF + (base + k) * 4), mode, out);
         }
