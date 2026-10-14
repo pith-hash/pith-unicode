@@ -45,7 +45,11 @@ pub const PITH_E_REJECTED: i32 = -2;
 /// `data` must point to `len` readable bytes; `out` to one writable
 /// pointer; `out_len` to one writable `usize`. All must stay valid for
 /// the duration of the call; the function retains nothing.
-#[unsafe(no_mangle)]
+// Every export in this module is `no_mangle` outside `cfg(test)` only. Built twice
+// (unit-test binary and shipped library) one `no_mangle` symbol gets two coverage
+// hashes, and `llvm-cov` keeps whichever copy it reads first, so the coverage gate
+// would depend on object order. A unit-test build keeps the normal mangled names.
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn pith_unicode_nfc(
     data: *const u8,
     len: usize,
@@ -64,7 +68,7 @@ pub unsafe extern "C" fn pith_unicode_nfc(
 /// `data` must point to `len` readable bytes; `out` to one writable
 /// pointer; `out_len` to one writable `usize`. All must stay valid for
 /// the duration of the call; the function retains nothing.
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn pith_unicode_nfd(
     data: *const u8,
     len: usize,
@@ -81,7 +85,7 @@ pub unsafe extern "C" fn pith_unicode_nfd(
 /// # Safety
 ///
 /// Same contract as [`pith_unicode_nfd`].
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn pith_unicode_nfkc(
     data: *const u8,
     len: usize,
@@ -98,7 +102,7 @@ pub unsafe extern "C" fn pith_unicode_nfkc(
 /// # Safety
 ///
 /// Same contract as [`pith_unicode_nfd`].
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn pith_unicode_nfkd(
     data: *const u8,
     len: usize,
@@ -120,7 +124,7 @@ pub unsafe extern "C" fn pith_unicode_nfkd(
 ///
 /// `data` must point to `len` readable bytes and `out` to one writable
 /// byte, all valid for the duration of the call.
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn pith_unicode_is_normalized(
     form: u32,
     data: *const u8,
@@ -150,7 +154,7 @@ pub unsafe extern "C" fn pith_unicode_is_normalized(
 /// # Safety
 ///
 /// Same contract as [`pith_unicode_nfd`].
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn pith_unicode_casefold(
     data: *const u8,
     len: usize,
@@ -166,7 +170,7 @@ pub unsafe extern "C" fn pith_unicode_casefold(
 /// # Safety
 ///
 /// Same contract as [`pith_unicode_nfd`].
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn pith_unicode_casefold_simple(
     data: *const u8,
     len: usize,
@@ -186,7 +190,7 @@ pub unsafe extern "C" fn pith_unicode_casefold_simple(
 /// not have been released (or otherwise freed) before. Null is
 /// accepted and ignored, so callers can free unconditionally on the
 /// error path.
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn pith_unicode_free(ptr: *mut u8, len: usize) {
     if ptr.is_null() {
         return;
