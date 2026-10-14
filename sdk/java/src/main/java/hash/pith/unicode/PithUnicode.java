@@ -262,6 +262,11 @@ public final class PithUnicode {
             }
         }
 
+        String bundled = BundledNative.extract(CDYLIB_NAMES);
+        if (bundled != null) {
+            return bundled;
+        }
+
         Path cwd = Paths.get("").toAbsolutePath();
         for (Path base = cwd; base != null; base = base.getParent()) {
             for (String name : CDYLIB_NAMES) {
@@ -275,6 +280,7 @@ public final class PithUnicode {
         throw new LinkageError(
                 "cannot locate the pith_unicode cdylib; set PITH_CDYLIB or PITH_CDYLIB_DIR"
                 + " (probed PITH_CDYLIB, PITH_CDYLIB_DIR, and target/release at "
-                + cwd + " and its ancestors)");
+                + cwd + " and its ancestors)"
+                + BundledNative.platformNote());
     }
 }
